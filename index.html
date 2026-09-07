@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<meta name="theme-color" content="#111418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>カメラ → スプレッドシート</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+:root{
+  --bg:#111418; --panel:#1b2027; --panel2:#232a33; --line:#333c47;
+  --fg:#e8edf3; --dim:#93a0ae; --accent:#3ba0ff; --accent2:#26c281;
+  --warn:#ffb020; --danger:#ff5a5a;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+/* ID セレクタの display 指定に負けないよう !important を付ける。
+   これが無いと #startOverlay{display:grid} などが [hidden] を上書きして
+   非表示にならず、下の要素へのタップを奪ってしまう。 */
+[hidden]{display:none!important}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  overscroll-behavior:none;
+}
+#app{display:flex;flex-direction:column;height:100%}
+
+/* ---------- header ---------- */
+header{
+  display:flex;align-items:center;gap:8px;padding:10px 12px;
+  padding-top:calc(10px + env(safe-area-inset-top,0px));
+  background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto;
+}
+header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.02em}
+header .sp{flex:1}
+.iconbtn{
+  background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+  width:36px;height:36px;border-radius:10px;font-size:16px;display:grid;place-items:center;cursor:pointer
+}
+.iconbtn:active{background:#2c3540}
+.iconbtn.on{background:var(--accent);border-color:var(--accent);color:#06243d}
+
+/* ---------- stage ---------- */
+#stage{position:relative;flex:1 1 auto;min-height:0;background:#000;overflow:auto}
+#liveWrap{position:absolute;inset:0;display:grid;place-items:center}
+video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+#startOverlay{position:absolute;inset:0;display:grid;place-items:center;background:#000c;text-align:center;padding:24px;z-index:5}
+#startOverlay p{color:var(--dim);max-width:22em;margin:.6em auto}
+
+#stillInner{position:relative;display:block;width:100%;touch-action:pan-y}
+#still{display:block;width:100%;height:auto}
+#boxes{position:absolute;inset:0}
+.box{
+  position:absolute;border:1.5px solid rgba(59,160,255,.95);
+  background:rgba(59,160,255,.14);border-radius:3px;cursor:pointer;
+}
+.box.bc{border-color:rgba(38,194,129,.95);background:rgba(38,194,129,.16)}
+.box:active{background:rgba(59,160,255,.42)}
+.box .lb{
+  position:absolute;bottom:100%;left:0;font-size:10px;line-height:1.3;
+  background:#000c;color:#fff;padding:1px 4px;border-radius:3px;white-space:nowrap;
+  max-width:60vw;overflow:hidden;text-overflow:ellipsis;pointer-events:none
+}
+#selRect{position:absolute;border:2px dashed var(--warn);background:rgba(255,176,32,.12);display:none;pointer-events:none;border-radius:4px}
+
+/* live barcode reticle */
+#reticle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:76%;max-width:420px;aspect-ratio:1.6;border:2px solid rgba(38,194,129,.85);
+  border-radius:14px;display:none;pointer-events:none;
+  box-shadow:0 0 0 9999px rgba(0,0,0,.26)}
+#reticle.on{display:block}
+
+/* ---------- toast / hud ---------- */
+#hud{position:absolute;left:0;right:0;top:8px;display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;z-index:6}
+/* トーストは画像に重なるので、本体はタップを透過させ、
+   中のボタンだけがタップを受け取るようにする（枠タップを奪わないため） */
+.toast{
+  pointer-events:none;background:#000d;border:1px solid var(--line);color:#fff;
+  padding:7px 10px;border-radius:999px;font-size:12px;display:flex;align-items:center;gap:8px;max-width:92vw;
+}
+.toast b{font-weight:600;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toast button{pointer-events:auto;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:3px 8px;font-size:11px;cursor:pointer}
+#prog{position:absolute;left:12px;right:12px;bottom:8px;height:3px;background:#fff2;border-radius:2px;overflow:hidden;display:none;z-index:6}
+#prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+
+/* ---------- controls ---------- */
+#controls{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--line);padding:10px 12px}
+.row{display:flex;gap:8px;align-items:center}
+.row+.row{margin-top:8px}
+button.btn{
+  flex:1;padding:12px 10px;border-radius:12px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--fg);font-size:14px;font-weight:600;cursor:pointer
+}
+button.btn:active{transform:translateY(1px)}
+button.btn.primary{background:var(--accent);border-color:var(--accent);color:#06243d}
+button.btn.ok{background:var(--accent2);border-color:var(--accent2);color:#03301f}
+button.btn.ghost{font-weight:500;color:var(--dim)}
+button.btn.on{background:var(--accent2);border-color:var(--accent2);color:#03301f}
+button.btn:disabled{opacity:.45;cursor:default}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2);flex:1}
+.seg button{flex:1;background:none;border:0;color:var(--dim);padding:10px 6px;font-size:12px;cursor:pointer}
+.seg button.on{background:var(--accent);color:#06243d;font-weight:600}
+label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);white-space:nowrap}
+input[type=range]{flex:1;accent-color:var(--accent)}
+
+/* ---------- data sheet ---------- */
+#sheetWrap{flex:0 0 auto;max-height:44vh;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid var(--line)}
+#sheetHead{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;color:var(--dim)}
+#sheetHead .sp{flex:1}
+#tableScroll{overflow:auto;-webkit-overflow-scrolling:touch;padding:0 8px 8px}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:var(--panel);color:var(--dim);font-weight:600;position:sticky;top:0;z-index:1;font-size:11px}
+td.idx{width:34px;color:var(--dim);text-align:center;background:var(--panel);font-size:11px}
+td.cell{background:var(--panel2);min-width:88px;word-break:break-all}
+td.cell:focus{outline:2px solid var(--accent);outline-offset:-2px;background:#2b3542}
+td.act{width:36px;text-align:center;background:var(--panel)}
+td.act button{background:none;border:0;color:var(--danger);font-size:15px;cursor:pointer;padding:0}
+tr.cur td.cell{box-shadow:inset 0 0 0 1px var(--warn)}
+#empty{color:var(--dim);text-align:center;padding:18px 12px;font-size:12px}
+#bottomBar{display:flex;gap:8px;padding:8px 12px calc(8px + var(--safe-b));background:var(--panel);border-top:1px solid var(--line)}
+
+/* ---------- modal ---------- */
+.modal{position:fixed;inset:0;background:#000a;display:none;z-index:50;align-items:flex-end}
+.modal.on{display:flex}
+.sheetbox{
+  background:var(--panel);width:100%;max-height:88vh;overflow:auto;border-radius:16px 16px 0 0;
+  padding:16px 16px calc(20px + var(--safe-b));border-top:1px solid var(--line)
+}
+.sheetbox h2{margin:0 0 4px;font-size:16px}
+.sheetbox h3{margin:20px 0 6px;font-size:11px;color:var(--dim);letter-spacing:.08em}
+.field{margin:10px 0}
+.field label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
+.field input[type=text],.field input[type=number],.field select{
+  width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--fg);font-size:14px;font-family:inherit
+}
+.hint{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.55}
+.hint code{background:var(--panel2);padding:1px 4px;border-radius:4px}
+.status{font-size:12px;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);margin-top:8px;word-break:break-all}
+.status.err{border-color:var(--danger);color:#ffb4b4}
+.status.ok{border-color:var(--accent2);color:#a9f0d0}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <h1>カメラ → スプレッドシート</h1>
+    <div class="sp"></div>
+    <button class="iconbtn" id="btnHelp" title="使い方">?</button>
+    <button class="iconbtn" id="btnSettings" title="設定">&#9881;</button>
+  </header>
+
+  <div id="stage">
+    <div id="liveWrap">
+      <video id="video" playsinline autoplay muted></video>
+      <div id="reticle"></div>
+    </div>
+
+    <div id="stillInner" hidden>
+      <canvas id="still"></canvas>
+      <div id="boxes"></div>
+      <div id="selRect"></div>
+    </div>
+
+    <div id="startOverlay">
+      <div>
+        <button class="btn primary" id="btnStart" style="padding:14px 28px;flex:none">カメラを開始</button>
+        <p>背面カメラで数字・文字・バーコードを撮影し、タップした値だけを表に集めます。</p>
+      </div>
+    </div>
+
+    <div id="hud"></div>
+    <div id="prog"><i></i></div>
+  </div>
+
+  <div id="controls">
+    <div id="liveCtl">
+      <div class="row">
+        <button class="btn primary" id="btnShoot">撮影して解析</button>
+        <button class="btn" id="btnScan">バーコード連続</button>
+      </div>
+      <div class="row">
+        <button class="iconbtn" id="btnTorch" title="ライト">&#9788;</button>
+        <input type="range" id="zoom" min="1" max="1" step="0.1" value="1" disabled>
+        <button class="iconbtn" id="btnFlip" title="カメラ切替">&#8635;</button>
+      </div>
+    </div>
+
+    <div id="stillCtl" hidden>
+      <div class="row">
+        <div class="seg" id="granSeg">
+          <button data-g="word" class="on">単語</button>
+          <button data-g="line">行</button>
+        </div>
+        <button class="btn" id="btnRegion" style="flex:1.3">範囲指定で読取</button>
+      </div>
+      <div class="row">
+        <button class="btn ghost" id="btnRetake">&#8592; 撮り直す</button>
+        <button class="btn" id="btnReocr">再解析</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sheetWrap">
+    <div id="sheetHead">
+      <span id="sheetInfo">0 行</span>
+      <div class="sp"></div>
+      <label class="chk">列数
+        <input type="number" id="cols" value="1" min="1" max="12"
+               style="width:52px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--fg)">
+      </label>
+      <button class="iconbtn" id="btnNewRow" title="改行（次の行へ）" style="width:32px;height:32px;font-size:13px">&#8629;</button>
+      <button class="iconbtn" id="btnClear" title="全消去" style="width:32px;height:32px;font-size:13px">&#128465;</button>
+    </div>
+    <div id="tableScroll">
+      <div id="empty">まだデータがありません。撮影して値をタップしてください。</div>
+      <table id="tbl" hidden><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+    </div>
+    <div id="bottomBar">
+      <button class="btn primary" id="btnCopy">TSVコピー</button>
+      <button class="btn ok" id="btnPush">Sheetsへ送信</button>
+      <button class="btn ghost" id="btnCsv" style="flex:0 0 84px">CSV</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ settings ============ -->
+<div class="modal" id="mSettings">
+  <div class="sheetbox">
+    <h2>設定</h2>
+
+    <h3>OCR</h3>
+    <div class="field">
+      <label>認識モード</label>
+      <select id="ocrMode">
+        <option value="digits">数字のみ（0-9 . , - / :）</option>
+        <option value="alnum" selected>英数字（半角 A-Z a-z 0-9 記号）</option>
+        <option value="jpn">日本語＋英数字（漢字・かな）</option>
+      </select>
+      <div class="hint">日本語を選ぶと初回のみ辞書データ（約 4MB）をダウンロードします。以降は端末にキャッシュされます。</div>
+    </div>
+    <div class="field">
+      <label class="chk"><input type="checkbox" id="preproc" checked> 前処理（グレースケール＋コントラスト強調）</label>
+      <div class="hint">印字が薄い・照明が不均一なラベルで効果があります。</div>
+    </div>
+    <div class="field">
+      <label>解析解像度の上限（px・長辺）</label>
+      <input type="number" id="maxSide" value="1600" min="640" max="4096" step="80">
+      <div class="hint">大きいほど小さな文字に強く、そのぶん遅くなります。1280〜2000 が目安。</div>
+    </div>
+
+    <h3>バーコード</h3>
+    <div class="field"><label class="chk"><input type="checkbox" id="bcAuto" checked> 連続スキャン中は自動で表に追加</label></div>
+    <div class="field"><label class="chk"><input type="checkbox" id="bcDedup" checked> 同じコードは追加しない（重複スキップ）</label></div>
+    <div class="field"><label class="chk"><input type="checkbox" id="bcVibe" checked> 読み取り時にバイブレーション</label></div>
+
+    <h3>GOOGLE スプレッドシート連携</h3>
+    <div class="field">
+      <label>OAuth クライアント ID</label>
+      <input type="text" id="gClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+      <div class="hint">
+        Google Cloud Console →「APIとサービス」で <b>Google Sheets API</b> を有効化 → 認証情報で
+        <b>ウェブアプリケーション</b>の OAuth クライアントを作成し、<b>承認済みの JavaScript 生成元</b>に
+        <code id="originHint">このページのオリジン</code> を登録してください。
+      </div>
+    </div>
+    <div class="field">
+      <label>スプレッドシート ID または URL</label>
+      <input type="text" id="gSheetId" placeholder="https://docs.google.com/spreadsheets/d/..." autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>シート名（タブ名）</label>
+      <input type="text" id="gSheetName" placeholder="シート1" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label class="chk"><input type="checkbox" id="gClearAfter" checked> 送信に成功したら表をクリアする</label>
+    </div>
+    <div class="row">
+      <button class="btn" id="btnAuth">Google 認証</button>
+      <button class="btn ghost" id="btnRevoke" style="flex:0 0 96px">認証解除</button>
+    </div>
+    <div class="status" id="gStatus">未認証</div>
+
+    <div class="row" style="margin-top:22px">
+      <button class="btn primary" id="btnCloseSettings">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ help ============ -->
+<div class="modal" id="mHelp">
+  <div class="sheetbox">
+    <h2>使い方</h2>
+    <ol style="padding-left:1.2em;color:var(--dim);line-height:1.9">
+      <li><b>撮影して解析</b> — 静止画にして文字を検出し、青い枠を重ねます。</li>
+      <li><b>枠をタップ</b> — その値が下の表に入ります。<b>単語 / 行</b>で粒度を切替。</li>
+      <li><b>範囲指定で読取</b> — 画像上を指でドラッグして囲むと、その部分だけを再認識します（最も確実）。</li>
+      <li><b>バーコード連続</b> — かざすだけで JAN / Code128 / QR などを連続読み取り。</li>
+      <li><b>列数</b>を 3 にすると 3 回タップごとに自動で次の行へ移ります（<b>&#8629;</b>で強制改行）。</li>
+      <li>表のセルは直接タップして<b>修正</b>できます。</li>
+      <li><b>TSVコピー</b> → Excel / Google スプレッドシートで貼り付けると複数セルに展開されます。</li>
+      <li><b>Sheetsへ送信</b> → 設定で連携すると、指定シートの最終行に直接追記します。</li>
+    </ol>
+    <h3>うまく読めないとき</h3>
+    <ul style="padding-left:1.2em;color:var(--dim);line-height:1.8">
+      <li>ズームスライダーで対象を大きく写す（小さく写ると OCR 精度は大きく落ちます）</li>
+      <li>設定で<b>認識モードを「数字のみ」</b>にすると誤認識が激減します</li>
+      <li>斜めからではなく<b>真正面</b>から、影が入らないように</li>
+      <li>1 か所を確実に取りたいときは<b>範囲指定で読取</b></li>
+    </ul>
+    <div class="row" style="margin-top:22px">
+      <button class="btn primary" id="btnCloseHelp">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="app.js"></script>
+</body>
+</html>
