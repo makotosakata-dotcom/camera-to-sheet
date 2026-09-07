@@ -16,6 +16,12 @@ const DEFAULTS = {
   bcAuto: true,
   bcDedup: true,
   bcVibe: true,
+  pushMode: 'gas',       // 'gas' = Apps Script ウェブアプリ / 'oauth' = Sheets API
+  gasUrl: '',
+  gasToken: '',
+  gasSheet: '',
+  gasAsText: true,
+  gasStamp: false,
   gClientId: '',
   gSheetId: '',
   gSheetName: '',
@@ -175,6 +181,13 @@ function onBarcode(text, format) {
   if (!text) return;
   if (text === S.lastBc.v && now - S.lastBc.t < 1500) return;
   S.lastBc = { v: text, t: now };
+  if (/[#&]cfg=/.test(text)) {                 // 設定リンクの QR を写した
+    const ok = importCfgFromString(text);
+    buzz(40);
+    toast(ok ? '設定リンクから連携設定を取り込みました' : '設定リンクを読み取れませんでした', 3500);
+    if (ok) { stopScan(); openSettings(); }
+    return;
+  }
   if (cfg.bcDedup && S.seenBc.has(text)) {
     toast('重複スキップ <b>' + escapeHtml(text) + '</b>', 1200);
     return;
@@ -793,39 +806,50 @@ $('btnRevoke').onclick = () => {
 $('btnPush').onclick = async () => {
   const rows = nonEmptyRows();
   if (!rows.length) { toast('データがありません'); return; }
-  const sid = sheetIdOf(cfg.gSheetId);
-  if (!cfg.gClientId || !sid) {
+  const gas = cfg.pushMode !== 'oauth';
+  if (gas) {
+    if (!gasUrlOk(cfg.gasUrl)) {
+      openSettings();
+      toast('設定で Apps Script の URL を入力するか、設定リンク（QR）を読み込んでください', 3500);
+      return;
+    }
+  } else if (!cfg.gClientId || !sheetIdOf(cfg.gSheetId)) {
     openSettings();
     toast('設定で「クライアント ID」と「スプレッドシート」を入力してください', 3500);
     return;
   }
+  const status = gas ? gasStatus : gStatus;
   const btn = $('btnPush');
   btn.disabled = true;
   const old = btn.textContent;
   btn.textContent = '送信中…';
   try {
-    let res = await appendRows(sid, rows, await getToken(false));
-    if (res.status === 401) {
-      accessToken = null;
-      res = await appendRows(sid, rows, await getToken(true));
-    }
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      const m = (j.error && j.error.message) || (res.status + ' ' + res.statusText);
-      throw new Error(m);
-    }
-    const j = await res.json();
-    const range = (j.updates && j.updates.updatedRange) || '';
+    const range = gas ? await pushViaGas(rows) : await pushViaOAuth(rows);
     toast('スプレッドシートに ' + rows.length + ' 行を追記しました' + (range ? '（' + escapeHtml(range) + '）' : ''), 3200);
-    gStatus('最終送信: ' + rows.length + ' 行 ' + (range || ''), 'ok');
+    status('最終送信: ' + rows.length + ' 行 ' + (range || ''), 'ok');
     if (cfg.gClearAfter) { S.data = [[]]; S.lastAdd = null; renderTable(); persistData(); }
   } catch (e) {
     toast('送信に失敗: ' + escapeHtml(e.message || String(e)), 5000);
-    gStatus('エラー: ' + (e.message || e), 'err');
+    status('エラー: ' + (e.message || e), 'err');
   } finally {
     btn.disabled = false; btn.textContent = old;
   }
 };
+
+async function pushViaOAuth(rows) {
+  const sid = sheetIdOf(cfg.gSheetId);
+  let res = await appendRows(sid, rows, await getToken(false));
+  if (res.status === 401) {
+    accessToken = null;
+    res = await appendRows(sid, rows, await getToken(true));
+  }
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    throw new Error((j.error && j.error.message) || (res.status + ' ' + res.statusText));
+  }
+  const j = await res.json();
+  return (j.updates && j.updates.updatedRange) || '';
+}
 
 function appendRows(sid, rows, token) {
   const name = String(cfg.gSheetName || '').trim();
@@ -839,22 +863,126 @@ function appendRows(sid, rows, token) {
   });
 }
 
+/* ======================================= Apps Script ウェブアプリ連携 */
+function gasStatus(msg, kind) {
+  const el = $('gasStatus');
+  el.textContent = msg;
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+function gasUrlOk(u) {
+  return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(String(u || '').trim());
+}
+async function gasFetch(body) {
+  const url = String(cfg.gasUrl || '').trim();
+  let res;
+  try {
+    /* Content-Type を text/plain にするとプリフライト無しで送れる
+       （Apps Script は OPTIONS に応答しないため application/json では失敗する） */
+    res = await fetch(url, body === undefined
+      ? { method: 'GET', redirect: 'follow' }
+      : { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+  } catch (e) {
+    throw new Error('Apps Script に接続できません。デプロイの「アクセスできるユーザー」が「全員」になっているか確認してください');
+  }
+  const txt = await res.text();
+  let j;
+  try { j = JSON.parse(txt); }
+  catch { throw new Error('応答を解釈できません（HTTP ' + res.status + '）。URL が /exec で終わる最新のデプロイか確認してください'); }
+  if (!j.ok) throw new Error(j.error || '不明なエラー');
+  return j;
+}
+async function pushViaGas(rows) {
+  const j = await gasFetch({
+    token: String(cfg.gasToken || ''),
+    sheet: String(cfg.gasSheet || ''),
+    asText: !!cfg.gasAsText,
+    stamp: !!cfg.gasStamp,
+    rows,
+  });
+  return j.range || '';
+}
+$('btnGasTest').onclick = async () => {
+  if (!gasUrlOk(cfg.gasUrl)) { gasStatus('URL の形式が違います（…/exec で終わる URL を入れてください）', 'err'); return; }
+  gasStatus('接続中…');
+  try {
+    const j = await gasFetch();
+    gasStatus('接続OK: ' + (j.name || 'スプレッドシート') + (Array.isArray(j.sheets) ? '（シート: ' + j.sheets.join(', ') + '）' : ''), 'ok');
+  } catch (e) { gasStatus('エラー: ' + (e.message || e), 'err'); }
+};
+
+/* ---- 設定リンク: URL の #cfg=<base64url(JSON)> を開く／QR で写すと設定を取り込む ---- */
+const CFG_KEYS = ['pushMode', 'gasUrl', 'gasToken', 'gasSheet', 'gasAsText', 'gasStamp',
+  'gClientId', 'gSheetId', 'gSheetName', 'cols', 'ocrMode'];
+function b64uEncode(str) {
+  let bin = '';
+  new TextEncoder().encode(str).forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64uDecode(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0)));
+}
+function buildCfgLink() {
+  const o = {};
+  for (const k of CFG_KEYS) if (cfg[k] !== undefined && cfg[k] !== '') o[k] = cfg[k];
+  return location.origin + location.pathname + '#cfg=' + b64uEncode(JSON.stringify(o));
+}
+function importCfgFromString(str) {
+  const m = String(str || '').match(/[#&]cfg=([A-Za-z0-9_-]+)/);
+  if (!m) return false;
+  let o;
+  try { o = JSON.parse(b64uDecode(m[1])); } catch { return false; }
+  if (!o || typeof o !== 'object') return false;
+  if (o.gasUrl !== undefined && !gasUrlOk(o.gasUrl)) return false;   // Apps Script 以外の URL は取り込まない
+  let n = 0;
+  for (const k of CFG_KEYS) if (o[k] !== undefined) { cfg[k] = o[k]; n++; }
+  if (!n) return false;
+  saveCfg();
+  settingsToUI();
+  renderTable();
+  return true;
+}
+function importCfgFromHash() {
+  if (!/[#&]cfg=/.test(location.hash)) return;
+  const ok = importCfgFromString(location.hash);
+  history.replaceState(null, '', location.pathname + location.search);
+  toast(ok ? '設定リンクから連携設定を取り込みました' : '設定リンクを読み取れませんでした', 3500);
+}
+$('btnCfgLink').onclick = async () => {
+  if (!gasUrlOk(cfg.gasUrl) && !cfg.gClientId) { toast('先に連携設定を入力してください'); return; }
+  const link = buildCfgLink();
+  let ok = false;
+  try { await navigator.clipboard.writeText(link); ok = true; } catch {}
+  if (!ok) ok = legacyCopy(link);
+  toast(ok ? '設定リンクをコピーしました。別のスマホでこのリンクを開くと同じ設定になります' : 'コピーに失敗しました', 3500);
+};
+
 /* ============================================================== 設定UI */
 const BIND = [
   ['ocrMode', 'value'], ['preproc', 'checked'], ['maxSide', 'value'],
   ['bcAuto', 'checked'], ['bcDedup', 'checked'], ['bcVibe', 'checked'],
+  ['pushMode', 'value'], ['gasUrl', 'value'], ['gasToken', 'value'], ['gasSheet', 'value'],
+  ['gasAsText', 'checked'], ['gasStamp', 'checked'],
   ['gClientId', 'value'], ['gSheetId', 'value'], ['gSheetName', 'value'], ['gClearAfter', 'checked'],
 ];
+function togglePushFields() {
+  const gas = cfg.pushMode !== 'oauth';
+  $('gasFields').hidden = !gas;
+  $('oauthFields').hidden = gas;
+}
 function settingsToUI() {
   for (const [id, prop] of BIND) $(id)[prop] = cfg[id];
   $('cols').value = cols();
+  togglePushFields();
 }
 function bindSettings() {
   for (const [id, prop] of BIND) {
     $(id).addEventListener('change', () => {
       const v = $(id)[prop];
-      cfg[id] = prop === 'value' && id === 'maxSide' ? Number(v) : v;
+      cfg[id] = prop === 'value' && id === 'maxSide' ? Number(v) : (typeof v === 'string' ? v.trim() : v);
       saveCfg();
+      if (id === 'pushMode') togglePushFields();
       if (id === 'ocrMode' && S.worker && S.workerLang !== langsFor(cfg.ocrMode)) {
         toast('認識モードを変更しました。次の解析から反映されます');
       }
@@ -883,6 +1011,7 @@ window.addEventListener('beforeunload', (e) => {
 /* ---------------------------------------------------------------- 起動 */
 loadCfg();
 restoreData();
+importCfgFromHash();     // 設定リンク（#cfg=…）で開かれた場合は先に取り込む
 settingsToUI();
 bindSettings();
 renderTable();
