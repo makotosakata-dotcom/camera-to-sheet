@@ -22,6 +22,7 @@ const DEFAULTS = {
   gasSheet: '',
   gasAsText: true,
   gasStamp: false,
+  gasViaTab: false,      // 直接送信できないと分かったら true（自動判定）
   gClientId: '',
   gSheetId: '',
   gSheetName: '',
@@ -824,7 +825,15 @@ $('btnPush').onclick = async () => {
   const old = btn.textContent;
   btn.textContent = '送信中…';
   try {
-    const range = gas ? await pushViaGas(rows) : await pushViaOAuth(rows);
+    const r = gas ? await pushViaGas(rows) : { range: await pushViaOAuth(rows) };
+    if (r.viaTab) {
+      /* 結果はそのタブに表示される。確認できないので表は自動では消さない */
+      toast('別タブで送信しました。開いたタブに「✓ 追記しました」と出れば完了です', 6000,
+        [{ label: '表をクリア', onClick: () => { S.data = [[]]; S.lastAdd = null; renderTable(); persistData(); } }]);
+      status('別タブで送信しました（結果はそのタブに表示）', 'ok');
+      return;
+    }
+    const range = r.range;
     toast('スプレッドシートに ' + rows.length + ' 行を追記しました' + (range ? '（' + escapeHtml(range) + '）' : ''), 3200);
     status('最終送信: ' + rows.length + ' 行 ' + (range || ''), 'ok');
     if (cfg.gClearAfter) { S.data = [[]]; S.lastAdd = null; renderTable(); persistData(); }
@@ -872,6 +881,7 @@ function gasStatus(msg, kind) {
 function gasUrlOk(u) {
   return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(String(u || '').trim());
 }
+class GasUnreachable extends Error {}
 async function gasFetch(body) {
   const url = String(cfg.gasUrl || '').trim();
   let res;
@@ -882,7 +892,8 @@ async function gasFetch(body) {
       ? { method: 'GET', redirect: 'follow' }
       : { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
   } catch (e) {
-    throw new Error('Apps Script に接続できません。デプロイの「アクセスできるユーザー」が「全員」になっているか確認してください');
+    /* 「全員」に公開されていないデプロイは Google のログイン画面へ転送され、CORS で失敗する */
+    throw new GasUnreachable('Apps Script に直接接続できません（デプロイが「全員」公開でない可能性）');
   }
   const txt = await res.text();
   let j;
@@ -891,23 +902,53 @@ async function gasFetch(body) {
   if (!j.ok) throw new Error(j.error || '不明なエラー');
   return j;
 }
+/* 直接送信できない組織向け: フォーム POST を新しいタブで開く。
+   タブ内ではブラウザの Google ログインが使われるので「組織内の全員」公開でも届く。 */
+function openGasTab(body) {
+  const f = document.createElement('form');
+  f.method = 'POST'; f.action = String(cfg.gasUrl || '').trim(); f.target = '_blank';
+  f.style.display = 'none';
+  const add = (n, v) => { const i = document.createElement('input'); i.type = 'hidden'; i.name = n; i.value = v; f.appendChild(i); };
+  add('ui', '1');
+  if (body) add('payload', JSON.stringify(body));
+  document.body.appendChild(f);
+  f.submit();
+  f.remove();
+}
+function gasBody(rows) {
+  return { token: String(cfg.gasToken || ''), sheet: String(cfg.gasSheet || ''), asText: !!cfg.gasAsText, stamp: !!cfg.gasStamp, rows };
+}
+/* 戻り値: { range } = 直接送信に成功 / { viaTab: true } = 別タブで送信した */
 async function pushViaGas(rows) {
-  const j = await gasFetch({
-    token: String(cfg.gasToken || ''),
-    sheet: String(cfg.gasSheet || ''),
-    asText: !!cfg.gasAsText,
-    stamp: !!cfg.gasStamp,
-    rows,
-  });
-  return j.range || '';
+  const body = gasBody(rows);
+  if (!cfg.gasViaTab) {
+    try {
+      const j = await gasFetch(body);
+      return { range: j.range || '' };
+    } catch (e) {
+      if (!(e instanceof GasUnreachable)) throw e;
+      cfg.gasViaTab = true; saveCfg();          // 次回からは最初から別タブで送る
+    }
+  }
+  openGasTab(body);
+  return { viaTab: true };
 }
 $('btnGasTest').onclick = async () => {
   if (!gasUrlOk(cfg.gasUrl)) { gasStatus('URL の形式が違います（…/exec で終わる URL を入れてください）', 'err'); return; }
   gasStatus('接続中…');
   try {
     const j = await gasFetch();
-    gasStatus('接続OK: ' + (j.name || 'スプレッドシート') + (Array.isArray(j.sheets) ? '（シート: ' + j.sheets.join(', ') + '）' : ''), 'ok');
-  } catch (e) { gasStatus('エラー: ' + (e.message || e), 'err'); }
+    cfg.gasViaTab = false; saveCfg();
+    gasStatus('接続OK（直接送信）: ' + (j.name || 'スプレッドシート') + (Array.isArray(j.sheets) ? '（シート: ' + j.sheets.join(', ') + '）' : ''), 'ok');
+  } catch (e) {
+    if (e instanceof GasUnreachable) {
+      cfg.gasViaTab = true; saveCfg();
+      window.open(String(cfg.gasUrl).trim() + '?ui=1', '_blank');
+      gasStatus('直接接続できないため「別タブで送信」モードにしました。開いたタブに「接続OK」と出れば使えます（Google へのログインを求められたら会社のアカウントでログイン）', 'ok');
+    } else {
+      gasStatus('エラー: ' + (e.message || e), 'err');
+    }
+  }
 };
 
 /* ---- 設定リンク: URL の #cfg=<base64url(JSON)> を開く／QR で写すと設定を取り込む ---- */
