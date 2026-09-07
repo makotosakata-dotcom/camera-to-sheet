@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#111418"/>
+  <!-- camera body -->
+  <rect x="72" y="150" width="368" height="252" rx="34" fill="#232a33" stroke="#3ba0ff" stroke-width="12"/>
+  <path d="M196 150l26-42h68l26 42z" fill="#232a33" stroke="#3ba0ff" stroke-width="12" stroke-linejoin="round"/>
+  <!-- grid of cells inside (spreadsheet) -->
+  <g stroke="#3ba0ff" stroke-width="10" opacity=".95">
+    <rect x="118" y="196" width="276" height="162" rx="10" fill="none"/>
+    <path d="M118 250h276M118 304h276M210 196v162M302 196v162"/>
+  </g>
+  <!-- tap target -->
+  <circle cx="302" cy="304" r="34" fill="#26c281" opacity=".85"/>
+  <path d="M288 304l10 12 20-24" stroke="#03301f" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
