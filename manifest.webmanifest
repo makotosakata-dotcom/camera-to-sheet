@@ -1,0 +1,16 @@
+{
+  "name": "カメラ → スプレッドシート",
+  "short_name": "カメラ入力",
+  "description": "カメラで写した数字・文字・バーコードをタップで選び、スプレッドシートに貼り付けます。",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111418",
+  "theme_color": "#111418",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
