@@ -878,8 +878,10 @@ function gasStatus(msg, kind) {
   el.textContent = msg;
   el.className = 'status' + (kind ? ' ' + kind : '');
 }
+/* 通常: https://script.google.com/macros/s/<ID>/exec
+   組織限定デプロイ: https://script.google.com/a/macros/<ドメイン>/s/<ID>/exec の両方を受け付ける */
 function gasUrlOk(u) {
-  return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(String(u || '').trim());
+  return /^https:\/\/script\.google\.com\/(?:macros|a\/macros\/[A-Za-z0-9.-]+)\/s\/[A-Za-z0-9_-]+\/exec$/.test(String(u || '').trim());
 }
 class GasUnreachable extends Error {}
 async function gasFetch(body) {
