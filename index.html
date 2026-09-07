@@ -262,30 +262,67 @@ tr.cur td.cell{box-shadow:inset 0 0 0 1px var(--warn)}
 
     <h3>GOOGLE スプレッドシート連携</h3>
     <div class="field">
-      <label>OAuth クライアント ID</label>
-      <input type="text" id="gClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+      <label>送信方式</label>
+      <select id="pushMode">
+        <option value="gas" selected>Apps Script ウェブアプリ（推奨・スマホ側の認証不要）</option>
+        <option value="oauth">Google Sheets API（OAuth 認証）</option>
+      </select>
       <div class="hint">
-        Google Cloud Console →「APIとサービス」で <b>Google Sheets API</b> を有効化 → 認証情報で
-        <b>ウェブアプリケーション</b>の OAuth クライアントを作成し、<b>承認済みの JavaScript 生成元</b>に
-        <code id="originHint">このページのオリジン</code> を登録してください。
+        設定リンク（QR）を開くと下の項目は自動で入ります。「バーコード連続」で QR を写しても取り込めます。
       </div>
     </div>
-    <div class="field">
-      <label>スプレッドシート ID または URL</label>
-      <input type="text" id="gSheetId" placeholder="https://docs.google.com/spreadsheets/d/..." autocomplete="off" spellcheck="false">
+
+    <div id="gasFields">
+      <div class="field">
+        <label>Apps Script ウェブアプリ URL</label>
+        <input type="text" id="gasUrl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" spellcheck="false">
+        <div class="hint">スプレッドシートの「拡張機能 → Apps Script」でウェブアプリとしてデプロイした URL。</div>
+      </div>
+      <div class="field">
+        <label>共有トークン（任意）</label>
+        <input type="text" id="gasToken" placeholder="Apps Script 側の TOKEN と同じ文字列" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>シート名（タブ名・空欄なら先頭のシート）</label>
+        <input type="text" id="gasSheet" placeholder="シート1" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field"><label class="chk"><input type="checkbox" id="gasAsText" checked> 数字も文字列として保存（先頭の 0 を保持）</label></div>
+      <div class="field"><label class="chk"><input type="checkbox" id="gasStamp"> 先頭に送信日時の列を追加</label></div>
+      <div class="row">
+        <button class="btn" id="btnGasTest">接続テスト</button>
+        <button class="btn ghost" id="btnCfgLink" style="flex:0 0 132px">設定リンクをコピー</button>
+      </div>
+      <div class="status" id="gasStatus">未設定</div>
     </div>
-    <div class="field">
-      <label>シート名（タブ名）</label>
-      <input type="text" id="gSheetName" placeholder="シート1" autocomplete="off" spellcheck="false">
+
+    <div id="oauthFields" hidden>
+      <div class="field">
+        <label>OAuth クライアント ID</label>
+        <input type="text" id="gClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+        <div class="hint">
+          Google Cloud Console →「APIとサービス」で <b>Google Sheets API</b> を有効化 → 認証情報で
+          <b>ウェブアプリケーション</b>の OAuth クライアントを作成し、<b>承認済みの JavaScript 生成元</b>に
+          <code id="originHint">このページのオリジン</code> を登録してください。
+        </div>
+      </div>
+      <div class="field">
+        <label>スプレッドシート ID または URL</label>
+        <input type="text" id="gSheetId" placeholder="https://docs.google.com/spreadsheets/d/..." autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>シート名（タブ名）</label>
+        <input type="text" id="gSheetName" placeholder="シート1" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="row">
+        <button class="btn" id="btnAuth">Google 認証</button>
+        <button class="btn ghost" id="btnRevoke" style="flex:0 0 96px">認証解除</button>
+      </div>
+      <div class="status" id="gStatus">未認証</div>
     </div>
-    <div class="field">
+
+    <div class="field" style="margin-top:14px">
       <label class="chk"><input type="checkbox" id="gClearAfter" checked> 送信に成功したら表をクリアする</label>
     </div>
-    <div class="row">
-      <button class="btn" id="btnAuth">Google 認証</button>
-      <button class="btn ghost" id="btnRevoke" style="flex:0 0 96px">認証解除</button>
-    </div>
-    <div class="status" id="gStatus">未認証</div>
 
     <div class="row" style="margin-top:22px">
       <button class="btn primary" id="btnCloseSettings">閉じる</button>
@@ -305,7 +342,7 @@ tr.cur td.cell{box-shadow:inset 0 0 0 1px var(--warn)}
       <li><b>列数</b>を 3 にすると 3 回タップごとに自動で次の行へ移ります（<b>&#8629;</b>で強制改行）。</li>
       <li>表のセルは直接タップして<b>修正</b>できます。</li>
       <li><b>TSVコピー</b> → Excel / Google スプレッドシートで貼り付けると複数セルに展開されます。</li>
-      <li><b>Sheetsへ送信</b> → 設定で連携すると、指定シートの最終行に直接追記します。</li>
+      <li><b>Sheetsへ送信</b> → 設定リンク（QR）を読み込むか設定を入力すると、スプレッドシートの最終行に直接追記します。</li>
     </ol>
     <h3>うまく読めないとき</h3>
     <ul style="padding-left:1.2em;color:var(--dim);line-height:1.8">
